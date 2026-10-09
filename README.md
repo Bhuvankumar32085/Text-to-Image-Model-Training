@@ -355,8 +355,4 @@ pytest tests/
 ### Q3: Multi-processing crashes on Windows
 - **Solution**: Keep `dataset.dataloader_num_workers: 0` on Windows platforms.
 
----
 
-## 📜 License
-- **Model Checkpoint**: Stable Diffusion 1.5 is released under the [CreativeML OpenRAIL-M License](https://huggingface.co/spaces/CompVis/stable-diffusion-license).
-- **Source Code**: MIT License.
