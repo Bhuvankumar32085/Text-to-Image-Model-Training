@@ -316,103 +316,35 @@ pytest tests/
 
 ## 🏛️ Clear Architecture & Workflow
 
-To make the architecture intuitive, the pipeline is divided into **two distinct phases**: **Training Phase** and **Inference (Generation) Phase**.
+Stable Diffusion 1.5 operates in **latent space** (8x compressed) using three coordinated components: **CLIP (Text)**, **VAE (Pixels ↔ Latents)**, and a **Conditional 2D U-Net (Denoising Engine)**.
 
-```
-========================================================================================
-                          PHASE 1: FINE-TUNING / TRAINING PIPELINE
-========================================================================================
-[Input Image (512x512)] ─────────► [Frozen VAE Encoder] ────────► Clean Latents (z_0)
-                                                                        │
-                                                                   + Add Noise (timestep t)
-                                                                        ▼
-                                                                 Noisy Latents (z_t)
-                                                                        │
-[Text Caption] ──► [Tokenizer] ──► [Frozen CLIP Text Encoder] ──► Text Embeddings (c)
-                                                                        │
-                                                                        ▼
-                                                         [Trainable 2D U-Net (860M)]
-                                                                        │
-                                                                        ▼
-                                                              Predicted Noise (eps_theta)
-                                                                        │
-                                              MSE Loss = ||Real Noise - eps_theta||^2
-                                                                        │
-                                                                        ▼
-                                                      [Adafactor Optimizer Updates U-Net]
-
-========================================================================================
-                      PHASE 2: TEXT-TO-IMAGE INFERENCE (GENERATION) PIPELINE
-========================================================================================
-[Text Prompt]       ──► [CLIP Text Encoder] ──► Positive Embedding
-[Negative Prompt]   ──► [CLIP Text Encoder] ──► Negative Embedding
-                                                       │
-                                            Classifier-Free Guidance (CFG)
-                                                       │
-[Random Noise (z_T)] ──► [30-Step Denoising Loop (DPMSolver / U-Net)] ──► Denoised Latent (z_0)
-                                                                                │
-                                                                                ▼
-                                                                    [Frozen VAE Decoder]
-                                                                                │
-                                                                                ▼
-                                                                    [Final 512x512 RGB Image]
-```
-
-### Detailed Flowcharts:
-
-#### 1. Training Phase (How the Model Learns)
 ```mermaid
-flowchart TD
-    subgraph DataPrep ["Step A: Image & Text Encoding"]
-        Img["512x512 RGB Image"] --> VAE_Enc["Frozen VAE Encoder (AutoencoderKL)"]
-        VAE_Enc --> Latent["Clean Latent z_0 (4x64x64)"]
-        Text["Caption Text"] --> CLIP["Frozen CLIP ViT-L/14 Text Encoder"]
-        CLIP --> TextEmb["Text Conditioning (77x768)"]
+flowchart LR
+    subgraph Training ["⚡ 1. Fine-Tuning Phase (How it Learns)"]
+        direction TB
+        Img["512x512 Image"] --> VAE_E["Frozen VAE"] --> Latent["Latent z_0"]
+        Latent --> Noise["+ Add Noise (t)"] --> Noisy["Noisy Latent z_t"]
+        Text["Caption"] --> CLIP_T["Frozen CLIP"] --> Cond["Text Embeds"]
+        Noisy & Cond --> UNet_T["Trainable U-Net (860M)"]
+        UNet_T --> Pred["Predict Noise"] --> Loss["MSE Loss"] --> Opt["Adafactor Update"]
     end
 
-    subgraph ForwardDiffusion ["Step B: Noise Injection"]
-        Latent --> NoiseAdder["Forward Diffusion Math q(z_t|z_0)"]
-        RandNoise["Gaussian Noise ~ N(0, I)"] --> NoiseAdder
-        Timestep["Random Timestep t in [0, 1000]"] --> NoiseAdder
-        NoiseAdder --> NoisyLatent["Noisy Latent z_t"]
-    end
-
-    subgraph BackwardDiffusion ["Step C: Prediction & Learning"]
-        NoisyLatent --> UNet["Trainable Conditional 2D U-Net (860M)"]
-        TextEmb --> UNet
-        Timestep --> UNet
-        UNet --> PredNoise["Predicted Noise"]
-        
-        PredNoise --> Loss["Diffusion MSE Loss (Float32)"]
-        RandNoise --> Loss
-        Loss --> Backprop["Backward Pass (Gradients)"]
-        Backprop --> Optimizer["Adafactor Optimizer (Updates 860M U-Net Weights)"]
+    subgraph Inference ["🎨 2. Generation Phase (How it Creates)"]
+        direction TB
+        Prompt["Text Prompt (CFG: 7.5)"] --> CLIP_I["CLIP Encoder"] --> PromptsEmb["Guidance Embeds"]
+        RandNoise["Initial Noise z_T"] & PromptsEmb --> UNet_I["30-Step Denoising Loop\n(DPMSolver++)"]
+        UNet_I --> CleanLatent["Clean Latent z_0"] --> VAE_D["Frozen VAE Decoder"] --> FinalImg["Generated 512x512 PNG"]
     end
 ```
 
-#### 2. Inference Phase (How Images Are Created from Text)
-```mermaid
-flowchart TD
-    subgraph PromptEncoding ["1. Text Conditioning"]
-        Prompt["Positive Prompt"] --> CLIP_Pos["CLIP Text Encoder"] --> PosEmb["Positive Embedding"]
-        NegPrompt["Negative Prompt (Quality Filters)"] --> CLIP_Neg["CLIP Text Encoder"] --> NegEmb["Negative Embedding"]
-    end
+### Core Components at a Glance:
+| Component | Architecture | Role in Pipeline | State |
+| :--- | :--- | :--- | :---: |
+| **Text Encoder** | CLIP ViT-L/14 (123M) | Converts text prompts into contextual embeddings ($77 \times 768$) | ❄️ Frozen |
+| **VAE Encoder/Decoder** | AutoencoderKL (83.7M) | Compresses $512 \times 512 \times 3$ image into $64 \times 64 \times 4$ latent space | ❄️ Frozen |
+| **Diffusion Backbone** | 2D Conditional U-Net (859.5M) | Predicts noise residual $\epsilon_\theta(z_t, t, c)$ to clean noisy latents | 🔥 **Fine-Tuned** |
+| **Optimizer** | Adafactor | Low-rank weight updates saving 80% VRAM (fits in 6GB GPU) | ⚡ Optimizer |
 
-    subgraph DenoisingLoop ["2. Iterative Denoising Loop (30 Steps)"]
-        InitialNoise["Random Latent Noise z_T ~ N(0, I)"] --> Sampler["DPM-Solver++ / Euler / DDPM Scheduler"]
-        PosEmb --> CFG["Classifier-Free Guidance (CFG Scale = 7.5)"]
-        NegEmb --> CFG
-        Sampler --> UNet_Inf["Fine-Tuned U-Net"]
-        CFG --> UNet_Inf
-        UNet_Inf --> StepDown["Remove Noise Step-by-Step (z_t -> z_t-1)"]
-        StepDown --> CleanLatent["Final Clean Latent z_0"]
-    end
-
-    subgraph Decode ["3. Pixel Reconstruction"]
-        CleanLatent --> VAE_Dec["Frozen VAE Decoder"]
-        VAE_Dec --> OutputImg["High-Resolution 512x512 Generated Image (.png)"]
-    end
-```
 
 ---
 
