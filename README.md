@@ -12,9 +12,6 @@ A complete, modular, extensible, and production-ready framework for fine-tuning 
 ---
 
 ## 📑 Table of Contents
-- [🏛️ Clear Architecture & Workflow (Training vs Inference)](#️-clear-architecture--workflow)
-- [🖼️ Generated Image Samples & Prompts Showcase](#️-generated-image-samples--prompts-showcase)
-- [🔍 Why Stable Diffusion 1.5 Uses a U-Net Rather than a DiT](#-why-stable-diffusion-15-uses-a-u-net-rather-than-a-dit)
 - [🚀 Quick Start (Zero to Generation in 5 Steps)](#-quick-start-zero-to-generation-in-5-steps)
 - [✨ Interactive Streamlit Web Studio](#-interactive-streamlit-web-studio)
 - [🔄 How to Fine-Tune on Your Own Custom Dataset](#-how-to-fine-tune-on-your-own-custom-dataset)
@@ -25,165 +22,10 @@ A complete, modular, extensible, and production-ready framework for fine-tuning 
 - [📂 Repository Structure](#-repository-structure)
 - [🧪 Automated Testing Suite](#-automated-testing-suite)
 - [❓ Troubleshooting & FAQs](#-troubleshooting--faqs)
-
----
-
-## 🏛️ Clear Architecture & Workflow
-
-To make the architecture intuitive, the pipeline is divided into **two distinct phases**: **Training Phase** and **Inference (Generation) Phase**.
-
-```
-========================================================================================
-                          PHASE 1: FINE-TUNING / TRAINING PIPELINE
-========================================================================================
-[Input Image (512x512)] ─────────► [Frozen VAE Encoder] ────────► Clean Latents (z_0)
-                                                                        │
-                                                                   + Add Noise (timestep t)
-                                                                        ▼
-                                                                 Noisy Latents (z_t)
-                                                                        │
-[Text Caption] ──► [Tokenizer] ──► [Frozen CLIP Text Encoder] ──► Text Embeddings (c)
-                                                                        │
-                                                                        ▼
-                                                         [Trainable 2D U-Net (860M)]
-                                                                        │
-                                                                        ▼
-                                                              Predicted Noise (eps_theta)
-                                                                        │
-                                              MSE Loss = ||Real Noise - eps_theta||^2
-                                                                        │
-                                                                        ▼
-                                                      [Adafactor Optimizer Updates U-Net]
-
-========================================================================================
-                      PHASE 2: TEXT-TO-IMAGE INFERENCE (GENERATION) PIPELINE
-========================================================================================
-[Text Prompt]       ──► [CLIP Text Encoder] ──► Positive Embedding
-[Negative Prompt]   ──► [CLIP Text Encoder] ──► Negative Embedding
-                                                       │
-                                            Classifier-Free Guidance (CFG)
-                                                       │
-[Random Noise (z_T)] ──► [30-Step Denoising Loop (DPMSolver / U-Net)] ──► Denoised Latent (z_0)
-                                                                                │
-                                                                                ▼
-                                                                    [Frozen VAE Decoder]
-                                                                                │
-                                                                                ▼
-                                                                    [Final 512x512 RGB Image]
-```
-
-### Detailed Flowcharts:
-
-#### 1. Training Phase (How the Model Learns)
-```mermaid
-flowchart TD
-    subgraph DataPrep ["Step A: Image & Text Encoding"]
-        Img["512x512 RGB Image"] --> VAE_Enc["Frozen VAE Encoder (AutoencoderKL)"]
-        VAE_Enc --> Latent["Clean Latent z_0 (4x64x64)"]
-        Text["Caption Text"] --> CLIP["Frozen CLIP ViT-L/14 Text Encoder"]
-        CLIP --> TextEmb["Text Conditioning (77x768)"]
-    end
-
-    subgraph ForwardDiffusion ["Step B: Noise Injection"]
-        Latent --> NoiseAdder["Forward Diffusion Math q(z_t|z_0)"]
-        RandNoise["Gaussian Noise ~ N(0, I)"] --> NoiseAdder
-        Timestep["Random Timestep t in [0, 1000]"] --> NoiseAdder
-        NoiseAdder --> NoisyLatent["Noisy Latent z_t"]
-    end
-
-    subgraph BackwardDiffusion ["Step C: Prediction & Learning"]
-        NoisyLatent --> UNet["Trainable Conditional 2D U-Net (860M)"]
-        TextEmb --> UNet
-        Timestep --> UNet
-        UNet --> PredNoise["Predicted Noise"]
-        
-        PredNoise --> Loss["Diffusion MSE Loss (Float32)"]
-        RandNoise --> Loss
-        Loss --> Backprop["Backward Pass (Gradients)"]
-        Backprop --> Optimizer["Adafactor Optimizer (Updates 860M U-Net Weights)"]
-    end
-```
-
-#### 2. Inference Phase (How Images Are Created from Text)
-```mermaid
-flowchart TD
-    subgraph PromptEncoding ["1. Text Conditioning"]
-        Prompt["Positive Prompt"] --> CLIP_Pos["CLIP Text Encoder"] --> PosEmb["Positive Embedding"]
-        NegPrompt["Negative Prompt (Quality Filters)"] --> CLIP_Neg["CLIP Text Encoder"] --> NegEmb["Negative Embedding"]
-    end
-
-    subgraph DenoisingLoop ["2. Iterative Denoising Loop (30 Steps)"]
-        InitialNoise["Random Latent Noise z_T ~ N(0, I)"] --> Sampler["DPM-Solver++ / Euler / DDPM Scheduler"]
-        PosEmb --> CFG["Classifier-Free Guidance (CFG Scale = 7.5)"]
-        NegEmb --> CFG
-        Sampler --> UNet_Inf["Fine-Tuned U-Net"]
-        CFG --> UNet_Inf
-        UNet_Inf --> StepDown["Remove Noise Step-by-Step (z_t -> z_t-1)"]
-        StepDown --> CleanLatent["Final Clean Latent z_0"]
-    end
-
-    subgraph Decode ["3. Pixel Reconstruction"]
-        CleanLatent --> VAE_Dec["Frozen VAE Decoder"]
-        VAE_Dec --> OutputImg["High-Resolution 512x512 Generated Image (.png)"]
-    end
-```
-
----
-
-## 🖼️ Generated Image Samples & Prompts Showcase
-
-Here are real outputs generated by our fine-tuned model checkpoint (`checkpoints/best_checkpoint`) during testing and through the Streamlit Web Studio:
-
-### Sample 1: Stylized Portrait Generation
-* **Saved File**: `outputs/inference/gen_20261009_213737_00.png`
-* **Text Prompt**:
-  ```text
-  "A cute girl image with blue background"
-  ```
-* **Negative Prompt**:
-  ```text
-  "blurry, low quality, distorted, deformed, ugly, artifacts"
-  ```
-* **Generation Settings**:
-  | Parameter | Value |
-  | :--- | :--- |
-  | **Model Checkpoint** | `checkpoints/best_checkpoint` |
-  | **Scheduler / Sampler** | `DPMSolverMultistepScheduler` |
-  | **Denoising Steps** | `30` |
-  | **Guidance Scale (CFG)** | `7.5` |
-  | **Seed** | `42` |
-  | **Resolution** | `512 x 512` |
-  | **Inference Time** | `4.2 seconds` on RTX 3050 GPU |
-
----
-
-### Sample 2: Photorealistic Indian Portrait via Streamlit Studio
-* **Saved File**: `outputs/inference/gen_20261009_214710_00.png`
-* **Text Prompt**:
-  ```text
-  "A beautiful young Indian woman wearing a traditional red saree with delicate golden embroidery, long black hair, warm brown eyes, a small red bindi on her forehead, subtle traditional jewelry, natural skin texture, standing in a traditional Indian courtyard, soft golden-hour sunlight, realistic facial features, detailed fabric texture, professional portrait photography, shallow depth of field, natural colors, high detail, 85mm camera lens."
-  ```
-* **Negative Prompt**:
-  ```text
-  "blurry, low quality, distorted, deformed, ugly, artifacts, bad anatomy, extra limbs, watermark"
-  ```
-* **Generation Settings**:
-  | Parameter | Value |
-  | :--- | :--- |
-  | **Model Checkpoint** | `checkpoints/best_checkpoint` |
-  | **Scheduler / Sampler** | `DPMSolverMultistepScheduler` |
-  | **Denoising Steps** | `30` |
-  | **Guidance Scale (CFG)** | `7.5` |
-  | **Seed** | `225260` |
-  | **Resolution** | `512 x 512` |
-
----
-
-## 🔍 Why Stable Diffusion 1.5 Uses a U-Net Rather than a DiT
-
-1. **Convolutional Inductive Bias**: Stable Diffusion 1.5 (Rombach et al., 2022) is built on the **Latent Diffusion Model (LDM)** architecture. It utilizes a 2D convolutional Residual U-Net with cross-attention. Convolutions naturally preserve 2D spatial locality and translation invariance across hierarchical feature levels ($64\times 64 \to 32\times 32 \to 16\times 16 \to 8\times 8$).
-2. **Diffusion Transformer (DiT)**: Introduced later in 2023 (Peebles & Xie) and used in SD 3 / Flux, DiTs replace U-Nets with Vision Transformers operating on flattened linear patches.
-3. **Architectural Accuracy**: Stable Diffusion 1.5 is strictly a **Convolutional U-Net** architecture. This repository adheres to the authentic SD 1.5 architecture while providing a clean, modular design.
+- [🔍 Why Stable Diffusion 1.5 Uses a U-Net Rather than a DiT](#-why-stable-diffusion-15-uses-a-u-net-rather-than-a-dit)
+- [🏛️ Clear Architecture & Workflow (Training vs Inference)](#️-clear-architecture--workflow)
+- [🖼️ Generated Image Samples & Prompts Showcase](#️-generated-image-samples--prompts-showcase)
+- [📜 License](#-license)
 
 ---
 
@@ -462,4 +304,167 @@ pytest tests/
 ### Q3: Multi-processing crashes on Windows
 - **Solution**: Keep `dataset.dataloader_num_workers: 0` on Windows platforms.
 
+---
 
+## 🔍 Why Stable Diffusion 1.5 Uses a U-Net Rather than a DiT
+
+1. **Convolutional Inductive Bias**: Stable Diffusion 1.5 (Rombach et al., 2022) is built on the **Latent Diffusion Model (LDM)** architecture. It utilizes a 2D convolutional Residual U-Net with cross-attention. Convolutions naturally preserve 2D spatial locality and translation invariance across hierarchical feature levels ($64\times 64 \to 32\times 32 \to 16\times 16 \to 8\times 8$).
+2. **Diffusion Transformer (DiT)**: Introduced later in 2023 (Peebles & Xie) and used in SD 3 / Flux, DiTs replace U-Nets with Vision Transformers operating on flattened linear patches.
+3. **Architectural Accuracy**: Stable Diffusion 1.5 is strictly a **Convolutional U-Net** architecture. This repository adheres to the authentic SD 1.5 architecture while providing a clean, modular design.
+
+---
+
+## 🏛️ Clear Architecture & Workflow
+
+To make the architecture intuitive, the pipeline is divided into **two distinct phases**: **Training Phase** and **Inference (Generation) Phase**.
+
+```
+========================================================================================
+                          PHASE 1: FINE-TUNING / TRAINING PIPELINE
+========================================================================================
+[Input Image (512x512)] ─────────► [Frozen VAE Encoder] ────────► Clean Latents (z_0)
+                                                                        │
+                                                                   + Add Noise (timestep t)
+                                                                        ▼
+                                                                 Noisy Latents (z_t)
+                                                                        │
+[Text Caption] ──► [Tokenizer] ──► [Frozen CLIP Text Encoder] ──► Text Embeddings (c)
+                                                                        │
+                                                                        ▼
+                                                         [Trainable 2D U-Net (860M)]
+                                                                        │
+                                                                        ▼
+                                                              Predicted Noise (eps_theta)
+                                                                        │
+                                              MSE Loss = ||Real Noise - eps_theta||^2
+                                                                        │
+                                                                        ▼
+                                                      [Adafactor Optimizer Updates U-Net]
+
+========================================================================================
+                      PHASE 2: TEXT-TO-IMAGE INFERENCE (GENERATION) PIPELINE
+========================================================================================
+[Text Prompt]       ──► [CLIP Text Encoder] ──► Positive Embedding
+[Negative Prompt]   ──► [CLIP Text Encoder] ──► Negative Embedding
+                                                       │
+                                            Classifier-Free Guidance (CFG)
+                                                       │
+[Random Noise (z_T)] ──► [30-Step Denoising Loop (DPMSolver / U-Net)] ──► Denoised Latent (z_0)
+                                                                                │
+                                                                                ▼
+                                                                    [Frozen VAE Decoder]
+                                                                                │
+                                                                                ▼
+                                                                    [Final 512x512 RGB Image]
+```
+
+### Detailed Flowcharts:
+
+#### 1. Training Phase (How the Model Learns)
+```mermaid
+flowchart TD
+    subgraph DataPrep ["Step A: Image & Text Encoding"]
+        Img["512x512 RGB Image"] --> VAE_Enc["Frozen VAE Encoder (AutoencoderKL)"]
+        VAE_Enc --> Latent["Clean Latent z_0 (4x64x64)"]
+        Text["Caption Text"] --> CLIP["Frozen CLIP ViT-L/14 Text Encoder"]
+        CLIP --> TextEmb["Text Conditioning (77x768)"]
+    end
+
+    subgraph ForwardDiffusion ["Step B: Noise Injection"]
+        Latent --> NoiseAdder["Forward Diffusion Math q(z_t|z_0)"]
+        RandNoise["Gaussian Noise ~ N(0, I)"] --> NoiseAdder
+        Timestep["Random Timestep t in [0, 1000]"] --> NoiseAdder
+        NoiseAdder --> NoisyLatent["Noisy Latent z_t"]
+    end
+
+    subgraph BackwardDiffusion ["Step C: Prediction & Learning"]
+        NoisyLatent --> UNet["Trainable Conditional 2D U-Net (860M)"]
+        TextEmb --> UNet
+        Timestep --> UNet
+        UNet --> PredNoise["Predicted Noise"]
+        
+        PredNoise --> Loss["Diffusion MSE Loss (Float32)"]
+        RandNoise --> Loss
+        Loss --> Backprop["Backward Pass (Gradients)"]
+        Backprop --> Optimizer["Adafactor Optimizer (Updates 860M U-Net Weights)"]
+    end
+```
+
+#### 2. Inference Phase (How Images Are Created from Text)
+```mermaid
+flowchart TD
+    subgraph PromptEncoding ["1. Text Conditioning"]
+        Prompt["Positive Prompt"] --> CLIP_Pos["CLIP Text Encoder"] --> PosEmb["Positive Embedding"]
+        NegPrompt["Negative Prompt (Quality Filters)"] --> CLIP_Neg["CLIP Text Encoder"] --> NegEmb["Negative Embedding"]
+    end
+
+    subgraph DenoisingLoop ["2. Iterative Denoising Loop (30 Steps)"]
+        InitialNoise["Random Latent Noise z_T ~ N(0, I)"] --> Sampler["DPM-Solver++ / Euler / DDPM Scheduler"]
+        PosEmb --> CFG["Classifier-Free Guidance (CFG Scale = 7.5)"]
+        NegEmb --> CFG
+        Sampler --> UNet_Inf["Fine-Tuned U-Net"]
+        CFG --> UNet_Inf
+        UNet_Inf --> StepDown["Remove Noise Step-by-Step (z_t -> z_t-1)"]
+        StepDown --> CleanLatent["Final Clean Latent z_0"]
+    end
+
+    subgraph Decode ["3. Pixel Reconstruction"]
+        CleanLatent --> VAE_Dec["Frozen VAE Decoder"]
+        VAE_Dec --> OutputImg["High-Resolution 512x512 Generated Image (.png)"]
+    end
+```
+
+---
+
+## 🖼️ Generated Image Samples & Prompts Showcase
+
+Here are real outputs generated by our fine-tuned model checkpoint (`checkpoints/best_checkpoint`) during testing and through the Streamlit Web Studio:
+
+### Sample 1: Stylized Portrait Generation
+* **Saved File**: `outputs/inference/gen_20261009_213737_00.png`
+* **Text Prompt**:
+  ```text
+  "A cute girl image with blue background"
+  ```
+* **Negative Prompt**:
+  ```text
+  "blurry, low quality, distorted, deformed, ugly, artifacts"
+  ```
+* **Generation Settings**:
+  | Parameter | Value |
+  | :--- | :--- |
+  | **Model Checkpoint** | `checkpoints/best_checkpoint` |
+  | **Scheduler / Sampler** | `DPMSolverMultistepScheduler` |
+  | **Denoising Steps** | `30` |
+  | **Guidance Scale (CFG)** | `7.5` |
+  | **Seed** | `42` |
+  | **Resolution** | `512 x 512` |
+  | **Inference Time** | `4.2 seconds` on RTX 3050 GPU |
+
+---
+
+### Sample 2: Photorealistic Indian Portrait via Streamlit Studio
+* **Saved File**: `outputs/inference/gen_20261009_214710_00.png`
+* **Text Prompt**:
+  ```text
+  "A beautiful young Indian woman wearing a traditional red saree with delicate golden embroidery, long black hair, warm brown eyes, a small red bindi on her forehead, subtle traditional jewelry, natural skin texture, standing in a traditional Indian courtyard, soft golden-hour sunlight, realistic facial features, detailed fabric texture, professional portrait photography, shallow depth of field, natural colors, high detail, 85mm camera lens."
+  ```
+* **Negative Prompt**:
+  ```text
+  "blurry, low quality, distorted, deformed, ugly, artifacts, bad anatomy, extra limbs, watermark"
+  ```
+* **Generation Settings**:
+  | Parameter | Value |
+  | :--- | :--- |
+  | **Model Checkpoint** | `checkpoints/best_checkpoint` |
+  | **Scheduler / Sampler** | `DPMSolverMultistepScheduler` |
+  | **Denoising Steps** | `30` |
+  | **Guidance Scale (CFG)** | `7.5` |
+  | **Seed** | `225260` |
+  | **Resolution** | `512 x 512` |
+
+---
+
+## 📜 License
+- **Model Checkpoint**: Stable Diffusion 1.5 is released under the [CreativeML OpenRAIL-M License](https://huggingface.co/spaces/CompVis/stable-diffusion-license).
+- **Source Code**: MIT License.
