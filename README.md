@@ -12,63 +12,170 @@ A complete, modular, extensible, and production-ready framework for fine-tuning 
 ---
 
 ## 📑 Table of Contents
-- [Architecture & Workflow](#-architecture--workflow)
-- [Why Stable Diffusion 1.5 Uses a U-Net Rather than a DiT](#-why-stable-diffusion-15-uses-a-u-net-rather-than-a-dit)
-- [Quick Start (Zero to Generation in 5 Steps)](#-quick-start-zero-to-generation-in-5-steps)
-- [Interactive Streamlit Web Studio](#-interactive-streamlit-web-studio)
-- [How to Fine-Tune on Your Own Custom Dataset](#-how-to-fine-tune-on-your-own-custom-dataset)
-- [Complete CLI Scripts Reference](#-complete-cli-scripts-reference)
-- [Hardware & 6GB VRAM Optimization Guide](#-hardware--6gb-vram-optimization-guide)
-- [Real Experiment Analytics & Training Benchmarks](#-real-experiment-analytics--training-benchmarks)
-- [Prompt Engineering & Negative Prompts Guide](#-prompt-engineering--negative-prompts-guide)
-- [Repository Structure](#-repository-structure)
-- [Automated Testing Suite](#-automated-testing-suite)
-- [Troubleshooting & FAQs](#-troubleshooting--faqs)
+- [🏛️ Clear Architecture & Workflow (Training vs Inference)](#️-clear-architecture--workflow)
+- [🖼️ Generated Image Samples & Prompts Showcase](#️-generated-image-samples--prompts-showcase)
+- [🔍 Why Stable Diffusion 1.5 Uses a U-Net Rather than a DiT](#-why-stable-diffusion-15-uses-a-u-net-rather-than-a-dit)
+- [🚀 Quick Start (Zero to Generation in 5 Steps)](#-quick-start-zero-to-generation-in-5-steps)
+- [✨ Interactive Streamlit Web Studio](#-interactive-streamlit-web-studio)
+- [🔄 How to Fine-Tune on Your Own Custom Dataset](#-how-to-fine-tune-on-your-own-custom-dataset)
+- [🛠️ Complete CLI Scripts Reference](#️-complete-cli-scripts-reference)
+- [⚡ Hardware & 6GB VRAM Optimization (Adafactor Deep-Dive)](#-hardware--6gb-vram-optimization-adafactor-deep-dive)
+- [📈 Real Experiment Analytics & Training Benchmarks](#-real-experiment-analytics--training-benchmarks)
+- [💡 Prompt Engineering & Negative Prompts Guide](#-prompt-engineering--negative-prompts-guide)
+- [📂 Repository Structure](#-repository-structure)
+- [🧪 Automated Testing Suite](#-automated-testing-suite)
+- [❓ Troubleshooting & FAQs](#-troubleshooting--faqs)
 
 ---
 
-## 🏛️ Architecture & Workflow
+## 🏛️ Clear Architecture & Workflow
 
+To make the architecture intuitive, the pipeline is divided into **two distinct phases**: **Training Phase** and **Inference (Generation) Phase**.
+
+```
+========================================================================================
+                          PHASE 1: FINE-TUNING / TRAINING PIPELINE
+========================================================================================
+[Input Image (512x512)] ─────────► [Frozen VAE Encoder] ────────► Clean Latents (z_0)
+                                                                        │
+                                                                   + Add Noise (timestep t)
+                                                                        ▼
+                                                                 Noisy Latents (z_t)
+                                                                        │
+[Text Caption] ──► [Tokenizer] ──► [Frozen CLIP Text Encoder] ──► Text Embeddings (c)
+                                                                        │
+                                                                        ▼
+                                                         [Trainable 2D U-Net (860M)]
+                                                                        │
+                                                                        ▼
+                                                              Predicted Noise (eps_theta)
+                                                                        │
+                                              MSE Loss = ||Real Noise - eps_theta||^2
+                                                                        │
+                                                                        ▼
+                                                      [Adafactor Optimizer Updates U-Net]
+
+========================================================================================
+                      PHASE 2: TEXT-TO-IMAGE INFERENCE (GENERATION) PIPELINE
+========================================================================================
+[Text Prompt]       ──► [CLIP Text Encoder] ──► Positive Embedding
+[Negative Prompt]   ──► [CLIP Text Encoder] ──► Negative Embedding
+                                                       │
+                                            Classifier-Free Guidance (CFG)
+                                                       │
+[Random Noise (z_T)] ──► [30-Step Denoising Loop (DPMSolver / U-Net)] ──► Denoised Latent (z_0)
+                                                                                │
+                                                                                ▼
+                                                                    [Frozen VAE Decoder]
+                                                                                │
+                                                                                ▼
+                                                                    [Final 512x512 RGB Image]
+```
+
+### Detailed Flowcharts:
+
+#### 1. Training Phase (How the Model Learns)
 ```mermaid
-graph TD
-    subgraph Data ["1. Data Ingestion & Preprocessing"]
-        RawImg["RGB Images (512x512)"] --> Norm["Image Normalization [-1, 1]"]
-        RawCap["Captions (Text)"] --> Tokenizer["CLIP Tokenizer (Max Length 77)"]
-        Tokenizer --> Tokens["Token IDs & Attention Mask"]
+flowchart TD
+    subgraph DataPrep ["Step A: Image & Text Encoding"]
+        Img["512x512 RGB Image"] --> VAE_Enc["Frozen VAE Encoder (AutoencoderKL)"]
+        VAE_Enc --> Latent["Clean Latent z_0 (4x64x64)"]
+        Text["Caption Text"] --> CLIP["Frozen CLIP ViT-L/14 Text Encoder"]
+        CLIP --> TextEmb["Text Conditioning (77x768)"]
     end
 
-    subgraph Conditioning ["2. Text Conditioning (Frozen)"]
-        Tokens --> CLIP["CLIP ViT-L/14 Text Encoder"]
-        CLIP --> Embeds["Text Embeddings (B, 77, 768)"]
+    subgraph ForwardDiffusion ["Step B: Noise Injection"]
+        Latent --> NoiseAdder["Forward Diffusion Math q(z_t|z_0)"]
+        RandNoise["Gaussian Noise ~ N(0, I)"] --> NoiseAdder
+        Timestep["Random Timestep t in [0, 1000]"] --> NoiseAdder
+        NoiseAdder --> NoisyLatent["Noisy Latent z_t"]
     end
 
-    subgraph LatentSpace ["3. Latent Compression (Frozen)"]
-        Norm --> VAE_Enc["AutoencoderKL VAE Encoder"]
-        VAE_Enc --> Scale["Scale Latents (x 0.18215)"]
-        Scale --> CleanLatents["Clean Latents z_0 (B, 4, 64, 64)"]
-    end
-
-    subgraph Diffusion ["4. Forward & Backward Diffusion (Fine-Tuned)"]
-        CleanLatents --> FwdNoise["Forward Diffusion q(z_t|z_0)"]
-        GaussNoise["Gaussian Noise eps ~ N(0, I)"] --> FwdNoise
-        Timesteps["Timesteps t ~ Uniform(0, 1000)"] --> FwdNoise
-        FwdNoise --> NoisyLatents["Noisy Latents z_t"]
+    subgraph BackwardDiffusion ["Step C: Prediction & Learning"]
+        NoisyLatent --> UNet["Trainable Conditional 2D U-Net (860M)"]
+        TextEmb --> UNet
+        Timestep --> UNet
+        UNet --> PredNoise["Predicted Noise"]
         
-        NoisyLatents --> UNet["Trainable Conditional 2D U-Net"]
-        Embeds --> UNet
-        Timesteps --> UNet
-        
-        UNet --> Pred["Noise Prediction eps_theta(z_t, t, c)"]
-        Pred --> LossCalc["Diffusion MSE Loss (Float32)"]
-        GaussNoise --> LossCalc
-        LossCalc --> Backprop["Adafactor Optimizer Update"]
-    end
-
-    subgraph Generation ["5. Generation & Decoding"]
-        DenoisedLatents["Denoised Latents (DPM / Euler / DDPM)"] --> VAE_Dec["AutoencoderKL VAE Decoder"]
-        VAE_Dec --> GeneratedImage["Generated 512x512 RGB Image"]
+        PredNoise --> Loss["Diffusion MSE Loss (Float32)"]
+        RandNoise --> Loss
+        Loss --> Backprop["Backward Pass (Gradients)"]
+        Backprop --> Optimizer["Adafactor Optimizer (Updates 860M U-Net Weights)"]
     end
 ```
+
+#### 2. Inference Phase (How Images Are Created from Text)
+```mermaid
+flowchart TD
+    subgraph PromptEncoding ["1. Text Conditioning"]
+        Prompt["Positive Prompt"] --> CLIP_Pos["CLIP Text Encoder"] --> PosEmb["Positive Embedding"]
+        NegPrompt["Negative Prompt (Quality Filters)"] --> CLIP_Neg["CLIP Text Encoder"] --> NegEmb["Negative Embedding"]
+    end
+
+    subgraph DenoisingLoop ["2. Iterative Denoising Loop (30 Steps)"]
+        InitialNoise["Random Latent Noise z_T ~ N(0, I)"] --> Sampler["DPM-Solver++ / Euler / DDPM Scheduler"]
+        PosEmb --> CFG["Classifier-Free Guidance (CFG Scale = 7.5)"]
+        NegEmb --> CFG
+        Sampler --> UNet_Inf["Fine-Tuned U-Net"]
+        CFG --> UNet_Inf
+        UNet_Inf --> StepDown["Remove Noise Step-by-Step (z_t -> z_t-1)"]
+        StepDown --> CleanLatent["Final Clean Latent z_0"]
+    end
+
+    subgraph Decode ["3. Pixel Reconstruction"]
+        CleanLatent --> VAE_Dec["Frozen VAE Decoder"]
+        VAE_Dec --> OutputImg["High-Resolution 512x512 Generated Image (.png)"]
+    end
+```
+
+---
+
+## 🖼️ Generated Image Samples & Prompts Showcase
+
+Here are real outputs generated by our fine-tuned model checkpoint (`checkpoints/best_checkpoint`) during testing and through the Streamlit Web Studio:
+
+### Sample 1: Stylized Portrait Generation
+* **Saved File**: `outputs/inference/gen_20261009_213737_00.png`
+* **Text Prompt**:
+  ```text
+  "A cute girl image with blue background"
+  ```
+* **Negative Prompt**:
+  ```text
+  "blurry, low quality, distorted, deformed, ugly, artifacts"
+  ```
+* **Generation Settings**:
+  | Parameter | Value |
+  | :--- | :--- |
+  | **Model Checkpoint** | `checkpoints/best_checkpoint` |
+  | **Scheduler / Sampler** | `DPMSolverMultistepScheduler` |
+  | **Denoising Steps** | `30` |
+  | **Guidance Scale (CFG)** | `7.5` |
+  | **Seed** | `42` |
+  | **Resolution** | `512 x 512` |
+  | **Inference Time** | `4.2 seconds` on RTX 3050 GPU |
+
+---
+
+### Sample 2: Photorealistic Indian Portrait via Streamlit Studio
+* **Saved File**: `outputs/inference/gen_20261009_214710_00.png`
+* **Text Prompt**:
+  ```text
+  "A beautiful young Indian woman wearing a traditional red saree with delicate golden embroidery, long black hair, warm brown eyes, a small red bindi on her forehead, subtle traditional jewelry, natural skin texture, standing in a traditional Indian courtyard, soft golden-hour sunlight, realistic facial features, detailed fabric texture, professional portrait photography, shallow depth of field, natural colors, high detail, 85mm camera lens."
+  ```
+* **Negative Prompt**:
+  ```text
+  "blurry, low quality, distorted, deformed, ugly, artifacts, bad anatomy, extra limbs, watermark"
+  ```
+* **Generation Settings**:
+  | Parameter | Value |
+  | :--- | :--- |
+  | **Model Checkpoint** | `checkpoints/best_checkpoint` |
+  | **Scheduler / Sampler** | `DPMSolverMultistepScheduler` |
+  | **Denoising Steps** | `30` |
+  | **Guidance Scale (CFG)** | `7.5` |
+  | **Seed** | `225260` |
+  | **Resolution** | `512 x 512` |
 
 ---
 
@@ -84,8 +191,8 @@ graph TD
 
 ### Step 1: Clone Repository & Create Virtual Environment
 ```bash
-git clone https://github.com/your-username/Text-To-Image-DiT.git
-cd Text-To-Image-DiT
+git clone https://github.com/Bhuvankumar32085/Text-to-Image-Model-Training.git
+cd Text-to-Image-Model-Training
 
 python -m venv .venv
 # On Windows PowerShell:
@@ -132,7 +239,7 @@ python generate.py --config configs/config.yaml --checkpoint checkpoints/best_ch
 
 ---
 
-## 🎨 Interactive Streamlit Web Studio
+## ✨ Interactive Streamlit Web Studio
 
 Launch the dedicated web interface:
 ```bash
@@ -192,7 +299,7 @@ You can fine-tune on **any dataset** without editing any Python code!
    ```yaml
    dataset:
      dataset_source: "huggingface"
-     dataset_name: "your-hf-username/your-dataset-name"  # e.g., "poloclub/diffusiondb"
+     dataset_name: "your-hf-username/your-dataset-name"  # e.g., "diffusers/pokemon-gpt4-captions"
      image_column: "image"
      caption_column: "text"
      max_samples: 500  # set null for full dataset
@@ -222,13 +329,13 @@ You can fine-tune on **any dataset** without editing any Python code!
 
 ---
 
-## ⚡ Hardware & 6GB VRAM Optimization Guide
+## ⚡ Hardware & 6GB VRAM Optimization (Adafactor Deep-Dive)
 
 Fine-tuning an 860M parameter U-Net on consumer GPUs (e.g., **NVIDIA RTX 3050 6GB Laptop GPU**) requires strict memory management. This repository implements:
 
 | Technique | Setting in `configs/config.yaml` | Why it is crucial |
 | :--- | :--- | :--- |
-| **Adafactor Optimizer** | `training.optimizer: "adafactor"` | Saves ~8 GB VRAM compared to AdamW by factoring second moments. |
+| **Adafactor Optimizer** | `training.optimizer: "adafactor"` | Saves ~8 GB VRAM compared to AdamW by factoring second moments into row/column sums. |
 | **Gradient Checkpointing** | `training.gradient_checkpointing: true` | Frees forward activations from memory; recomputes on backward pass. |
 | **Mixed Precision (FP16)** | `training.mixed_precision: "fp16"` | Halves activation and weight footprint during computation. |
 | **PyTorch 2.x SDPA Attention** | `training.enable_sdpa: true` | Fused Scaled Dot-Product Attention eliminates large attention matrix allocations. |
