@@ -1,0 +1,9 @@
+image_path,caption,group_id
+images/sample_01.png,A serene mountain landscape with a crystal clear blue lake and pine trees at sunrise,group_nature
+images/sample_02.png,A cozy wooden cabin glowing warmly in a snowy forest at dusk,group_nature
+images/sample_03.png,A futuristic neon cyberpunk cityscape with towering skyscrapers and rain-slicked streets,group_urban
+images/sample_04.png,An ultra-modern architectural villa with glass walls and an infinity pool,group_urban
+images/sample_05.png,A cute playful golden retriever puppy sitting on lush green grass in summer sunlight,group_animals
+images/sample_06.png,A wise old owl perched silently on an ancient mossy tree branch under the moonlight,group_animals
+images/sample_07.png,A vibrant abstract oil painting with swirling crimson gold and sapphire textures,group_art
+images/sample_08.png,A minimalist geometric ceramic sculpture standing in a sunlit art studio gallery,group_art

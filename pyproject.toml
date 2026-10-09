@@ -1,0 +1,47 @@
+[project]
+name = "text-to-image-diffusion"
+version = "0.1.0"
+description = "Config-Driven Stable Diffusion 1.5 Fine-Tuning Framework with Modular Architecture and Detailed Diagnostics"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+    "diffusers>=0.27.0",
+    "transformers>=4.38.0",
+    "accelerate>=0.28.0",
+    "safetensors>=0.4.2",
+    "huggingface-hub>=0.21.0",
+    "pyyaml>=6.0.1",
+    "pillow>=10.0.0",
+    "numpy>=1.24.0,<3.0.0",
+    "tensorboard>=2.15.0",
+    "tqdm>=4.66.0",
+    "scikit-learn>=1.3.0",
+    "scipy>=1.11.0",
+    "matplotlib>=3.8.0",
+    "datasets>=2.18.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.3.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]

@@ -1,0 +1,83 @@
+{
+  "model_family": "stable_diffusion",
+  "model_identifier": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+  "model_name": "Stable Diffusion v1.5",
+  "official_hf_url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5",
+  "license": "CreativeML OpenRAIL-M",
+  "architecture_type": "Latent Diffusion Model (UNet2DConditionModel)",
+  "is_transformer_dit": false,
+  "components": {
+    "tokenizer": {
+      "class": "CLIPTokenizer",
+      "subfolder": "tokenizer",
+      "vocab_size": 49408,
+      "max_sequence_length": 77,
+      "bos_token_id": 49406,
+      "eos_token_id": 49407,
+      "pad_token_id": 49407
+    },
+    "text_encoder": {
+      "class": "CLIPTextModel",
+      "subfolder": "text_encoder",
+      "architecture": "CLIP ViT-L/14",
+      "hidden_size": 768,
+      "num_hidden_layers": 12,
+      "num_attention_heads": 12,
+      "intermediate_size": 3072,
+      "default_trainable": false
+    },
+    "vae": {
+      "class": "AutoencoderKL",
+      "subfolder": "vae",
+      "spatial_downsample_factor": 8,
+      "in_channels": 3,
+      "out_channels": 3,
+      "latent_channels": 4,
+      "scaling_factor": 0.18215,
+      "default_trainable": false
+    },
+    "unet": {
+      "class": "UNet2DConditionModel",
+      "subfolder": "unet",
+      "in_channels": 4,
+      "out_channels": 4,
+      "sample_size": 64,
+      "cross_attention_dim": 768,
+      "down_block_types": [
+        "CrossAttnDownBlock2D",
+        "CrossAttnDownBlock2D",
+        "CrossAttnDownBlock2D",
+        "DownBlock2D"
+      ],
+      "up_block_types": [
+        "UpBlock2D",
+        "CrossAttnUpBlock2D",
+        "CrossAttnUpBlock2D",
+        "CrossAttnUpBlock2D"
+      ],
+      "block_out_channels": [320, 640, 1280, 1280],
+      "layers_per_block": 2,
+      "attention_head_dim": 8,
+      "parameter_count_millions": 859.5,
+      "default_trainable": true
+    },
+    "scheduler": {
+      "train_class": "DDPMScheduler",
+      "inference_class": "DPMSolverMultistepScheduler",
+      "num_train_timesteps": 1000,
+      "beta_start": 0.00085,
+      "beta_end": 0.012,
+      "beta_schedule": "scaled_linear",
+      "prediction_type": "epsilon",
+      "clip_sample": false
+    }
+  },
+  "training_specs": {
+    "default_resolution": [512, 512],
+    "latent_resolution": [64, 64],
+    "recommended_learning_rate": 1e-5,
+    "recommended_batch_size": 1,
+    "recommended_grad_accumulation": 4,
+    "mixed_precision_recommended": "fp16"
+  }
+}

@@ -1,0 +1,213 @@
+# Single Source of Configuration — Text-to-Image Diffusion Model (SD 1.5)
+
+# A. Project Settings
+project:
+  name: "text-to-image-diffusion"
+  experiment_name: "sd15_pokemon_finetune"
+  seed: 42
+  project_root: "."
+  log_dir: "logs"
+  checkpoint_dir: "checkpoints"
+  output_dir: "outputs"
+  overwrite: false
+  resume: false
+  experiment_metadata:
+    description: "Config-driven fine-tuning of Stable Diffusion 1.5"
+    author: "Researcher"
+    tags: ["stable_diffusion", "sd15", "unet_finetune", "text_to_image"]
+
+# B. Pretrained Model Components
+model:
+  model_family: "stable_diffusion"
+  model_identifier: "stable-diffusion-v1-5/stable-diffusion-v1-5"
+  revision: "main"
+  local_pretrained_model_dir: null
+  cache_dir: null
+  dtype: "float16"                     # "float32", "float16", "bfloat16"
+  local_files_only: false
+  strict_compatibility_check: true
+  subfolder_overrides:
+    tokenizer: "tokenizer"
+    text_encoder: "text_encoder"
+    vae: "vae"
+    unet: "unet"
+    scheduler: "scheduler"
+
+# C. Dataset Settings
+dataset:
+  dataset_source: "local"              # "local", "huggingface", "custom"
+  dataset_identifier: null
+  dataset_download_dest: "data/raw/downloaded_dataset"
+  image_dir: "data/raw/pokemon_captions"
+  caption_metadata_path: "data/raw/pokemon_captions/metadata.csv"
+  image_column: "image_path"
+  caption_column: "caption"
+  group_column: null                   # Optional column for group-aware leak prevention
+  supported_extensions: [".jpg", ".jpeg", ".png", ".webp", ".bmp"]
+  target_resolution: [512, 512]        # [height, width]
+  aspect_ratio_policy: "center_crop"   # "center_crop", "random_crop", "resize"
+  image_normalization: "neg_one_to_one" # "neg_one_to_one" ([-1, 1]) or "zero_to_one" ([0, 1])
+  corrupt_image_handling: "skip"       # "skip", "error"
+  duplicate_detection: true            # Check for duplicate image files/hashes
+  min_caption_length: 3
+  max_caption_length: 500
+  caption_filtering:
+    drop_empty: true
+    strip_whitespace: true
+  dataset_cache_dir: "data/processed"
+  max_samples_debug: null              # null for full dataset, integer (e.g. 50) for fast debug
+
+# D. Data Splits
+splits:
+  train_fraction: 0.90                 # 90% of total data for training+validation pool
+  test_fraction: 0.10                  # 10% strictly held out for testing
+  validation_fraction_of_train: 0.10   # 10% of train pool -> 81% train, 9% val, 10% test
+  split_seed: 42
+  group_aware_split: true              # Ensure samples sharing group_column are kept together
+  manifest_dir: "data/splits"
+  save_manifests: true
+  overwrite_manifests: false
+
+# E. Fine-Tuning Policy
+fine_tuning:
+  mode: "full_finetune"                # "full_finetune", "partial", "lora" (only full_finetune by default)
+  train_unet: true
+  train_text_encoder: false
+  train_vae: false
+  trainable_components:
+    - "unet"
+  use_lora: false
+
+# F. Training Hyperparameters & Execution
+training:
+  epochs: 5
+  max_train_steps: 500
+  train_batch_size: 1                  # Keep at 1 for 6 GB VRAM safety
+  gradient_accumulation_steps: 4       # Effective batch size = 4
+  learning_rate: 1.0e-5
+  component_learning_rates:
+    unet: 1.0e-5
+    text_encoder: 5.0e-6
+  optimizer: "adafactor"               # "adafactor" (recommended for <=6GB VRAM), "adamw", "adam", "sgd"
+  optimizer_params:
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+    weight_decay: 0.01
+  lr_scheduler: "cosine"               # "linear", "cosine", "cosine_with_restarts", "constant", "constant_with_warmup"
+  lr_warmup_steps: 50
+  max_grad_norm: 1.0
+  mixed_precision: "fp16"              # "no", "fp16", "bf16"
+  gradient_checkpointing: true         # Crucial for VRAM reduction
+  enable_xformers_memory_efficient_attention: false
+  enable_sdpa: true                    # PyTorch Scaled Dot Product Attention
+  dataloader_num_workers: 0            # 0 recommended on Windows to prevent multi-process issues
+  pin_memory: true
+  persistent_workers: false
+  shuffle: true
+  checkpoint_frequency_steps: 100
+  checkpoint_frequency_epochs: 1
+  save_best_checkpoint: true
+  max_checkpoints_to_keep: 3
+  validation_frequency_steps: 50
+  logging_frequency_steps: 10
+  tensor_stats_frequency_steps: 50
+  image_preview_frequency_steps: 100
+  seed: 42
+  deterministic: true
+  resume_from_checkpoint: null         # Path to checkpoint directory or "latest"
+  gpu_memory_warning_threshold_gb: 5.5
+  early_stopping:
+    enabled: false
+    patience: 5
+    min_delta: 0.001
+
+# G. Hardware & Device Selection
+device:
+  type: "auto"                         # "auto", "cuda", "cpu"
+  device_index: 0
+  allow_cpu_fallback: false            # Never silently switch from CUDA to CPU during training
+  require_cuda: false
+  memory_check: true
+
+# H. Validation Configuration
+validation:
+  validation_batch_size: 1
+  validation_steps: 50
+  fixed_prompts:
+    - "A serene mountain landscape with a crystal clear blue lake and pine trees at sunrise"
+    - "A futuristic neon cyberpunk cityscape with towering skyscrapers and rain-slicked streets"
+  num_inference_steps: 25
+  guidance_scale: 7.5
+  num_preview_images: 2
+  metrics:
+    - "diffusion_loss"
+  save_side_by_side: true
+  report_output_dir: "outputs/reports"
+
+# I. Test Configuration
+test:
+  test_batch_size: 1
+  test_prompts:
+    - "A cozy wooden cabin glowing warmly in a snowy forest at dusk"
+    - "A cute playful golden retriever puppy sitting on lush green grass in summer sunlight"
+  num_inference_steps: 30
+  guidance_scale: 7.5
+  num_images_per_prompt: 2
+  seed: 123
+  metrics:
+    - "diffusion_loss"
+  output_dir: "outputs/test_results"
+
+# J. Logging & Model Analytics
+logging:
+  console: true
+  file: true
+  jsonl: true
+  csv: true
+  tensorboard: true
+  log_frequency: 10
+  tensor_stats_frequency: 50
+  image_preview_frequency: 100
+  save_input_image_samples: true
+  save_clean_latent_stats: true
+  save_noisy_latent_stats: true
+  save_noise_stats: true
+  save_pred_noise_stats: true
+  save_loss_breakdown: true
+  save_gradient_norms: true
+  save_param_norms: true
+  save_gpu_memory_metrics: true
+  save_inference_timings: true
+  nan_inf_detection: true
+  log_component_shapes_and_dtypes: true
+  debug_mode: false
+  max_stored_diagnostic_tensors: 10
+
+# K. Inference Settings
+inference:
+  checkpoint_path: null                # null uses pretrained base or pass checkpoint dir
+  prompt: "A cinematic photo of a cozy mountain cabin in autumn mist, 8k resolution"
+  negative_prompt: "blurry, low quality, distorted, deformed, ugly, artifacts"
+  height: 512
+  width: 512
+  num_inference_steps: 30
+  guidance_scale: 7.5
+  num_images_per_prompt: 1
+  seed: 42
+  scheduler_type: "DPMSolverMultistepScheduler" # "DDPMScheduler", "EulerDiscreteScheduler", "DPMSolverMultistepScheduler", "PNDMScheduler"
+  output_format: "png"
+  output_dir: "outputs/inference"
+  safety_checker: false
+
+# L. Dataset Download Script Configuration
+download:
+  dataset_provider: "huggingface"       # "huggingface", "url", "kaggle", "local"
+  dataset_identifier: "diffusers/pokemon-gpt4-captions"
+  auth_token_env_var: "HF_TOKEN"
+  download_dir: "data/raw/pokemon_captions"
+  max_samples: 100                     # Cap to avoid downloading huge datasets unexpectedly
+  workers: 2
+  retries: 3
+  timeout_seconds: 60
+  resume_download: true
+  verify_checksums: false
